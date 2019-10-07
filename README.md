@@ -1,2 +1,2 @@
 # vae_playground
-implementation of different variational autoencoders
+implementation of different variational autoencoders using pytorch
