@@ -3,6 +3,7 @@ implementation of different variational autoencoders using pytorch
 
 to train on the MNIST dataset with a semi-supervised VAE, run
 `python train_mnist.py  --is_semi=1`, losses and models will be saved under `./logs` and `./models`.
+by default the training set is split into 50000 images with class labels and 10000 without labels.
 
 to train on the MNIST dataset with a Vanilla VAE (no conditional generation), run
 `python train_mnist.py  --is_semi=0`, losses and models will be saved under `./logs` and `./models`.
