@@ -11,38 +11,56 @@ from tensorboardX import SummaryWriter
 from torchvision import utils
 from vae import *
 
-def test(data_loader, model, out_dir):
+def test(data_loader, model, out_dir, is_semi):
     model.eval()
     with torch.no_grad():
-        for idx, img in enumerate(data_loader):
-            out, mu, logvar = model(img)
-            z = [torch.randn((512, 32, 32))]
-            z = torch.stack(z)
-            z = z.to('cuda')
-            generated = model.module.decode(z)
-            utils.save_image(
-                torch.cat([out,img],0),
-                os.path.join(args.out_dir, 'out', str(idx)+'.png' ),
-                normalize=True,
-                range=(-1, 1)
-            )
-            utils.save_image(
-                generated,
-                os.path.join(args.out_dir, 'out', str(idx)+'_random.png' ),
-                normalize=True,
-                range=(-1, 1)
-            )
+        if data_loader is not None:
+            for idx, img in enumerate(data_loader):
+                out, mu, logvar = model(img)
+                z = [torch.randn((512, 32, 32))]
+                z = torch.stack(z)
+                z = z.to('cuda')
+                utils.save_image(
+                    torch.cat([out,img],0),
+                    os.path.join(args.out_dir, 'out', str(idx)+'.png' ),
+                    normalize=True,
+                    range=(-1, 1)
+                )
+        else: #10 samples for each digit.
+            samples = []
+            digits = []
+            for i in range(10):
+                latent_features = torch.randn(10, 20).cuda()
+                if is_semi:
+                    label = np.zeros((10,10)).astype(float)
+                    label[:,i] = 1
+                    label = torch.FloatTensor(label).cuda()
+                    out = model.module.decode(torch.cat([latent_features, label], dim=1))
+                else:
+                    out = model.module.decode(latent_features)
+                samples.append(out.view(-1, 28, 28))
+            
+            for idx, sample in enumerate(samples):
+                sample = list(torch.split(sample, 1, dim=0))
+                digits.append(torch.cat(sample, dim=1))
+                utils.save_image(
+                        torch.cat(sample, dim=1),
+                        os.path.join(args.out_dir, str(idx) + 'out.png' ),
+                        normalize=True,
+                        range=(-1, 1)
+                    )
 
 
 def main(args):
-    model = VAE(zsize=512).to(args.device)
+    model = VAE(is_semi=args.is_semi).to(args.device)
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            transforms.Normalize((0.1307,), (0.3081,))
         ]
     )
-    test_loader = get_test_loader(args.batch_size, args.dataset_path, args.device, transform=transform)
+    if args.dataset_path is not None:
+        test_loader = get_test_loader(args.batch_size, args.dataset_path, args.device, transform=transform)
 
     with open(args.model_path, 'rb') as f:
         if args.device == torch.device('cpu'):
@@ -52,16 +70,24 @@ def main(args):
         model.load_state_dict(state_dict)
     model = nn.DataParallel(model)
     model.eval()
-    test(test_loader, model, args.out_dir)
+
+    if args.dataset_path is not None:#reconstruction
+        test_loader = get_test_loader(args.batch_size, args.dataset_path, args.device, transform=transform)
+        test(test_loader, model, args.out_dir)
+    else:
+        test(None, model, args.out_dir, args.is_semi)#generation
 
 
 if __name__ == '__main__':
 
     import argparse
     import os
+    parser = argparse.ArgumentParser(description='parset for vae')
 
-    parser.add_argument('--dataset_path', type=str, help='path to the dataset')
+
+    parser.add_argument('--dataset_path', type=str, help='path to the dataset', default=None)
     parser.add_argument('--model_path', type=str, help='path to the model checkpoint', default=None)
+    parser.add_argument('--is_semi', type=int, help='enable semi-supervised or not', default=1)
 
 
     # miscellaneous
@@ -73,6 +99,7 @@ if __name__ == '__main__':
 
     if not os.path.exists(os.path.join(args.out_dir, 'out')):
         os.makedirs(os.path.join(args.out_dir, 'out'))
+    args.out_dir = os.path.join(args.out_dir, 'out')
     args.device = torch.device(args.device)
 
     main(args)
