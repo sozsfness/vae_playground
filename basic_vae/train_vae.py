@@ -3,17 +3,13 @@ import torch
 from torchvision import transforms
 from torch import nn, optim
 from datetime import datetime
-
-from vq_vae import *
-from vae import *
-import tensorboardX
+from vae_cat import *
 from data_loader import *
 from tensorboardX import SummaryWriter
-from pixelsnail import *
 from torchvision import utils
 
 
-def train(data_loader, model, optimizer):
+def train(data_loader, model, optimizer, is_semi=False):
     model.train()
 
     criterion = nn.MSELoss()
@@ -38,7 +34,7 @@ def train(data_loader, model, optimizer):
     return mse_sum/mse_n
 
 
-def val(data_loader, model):
+def val(data_loader, model, is_semi=False):
     model.eval()
     criterion = nn.MSELoss()
 
@@ -55,8 +51,6 @@ def val(data_loader, model):
     return mse_sum/mse_n
 
 
-
-
 def main(args):
     current_time = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     writer = SummaryWriter(os.path.join(args.out_dir, 'logs'))
@@ -67,7 +61,8 @@ def main(args):
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ]
     )
-    train_loader, val_loader = get_train_loader(args.batch_size, args.dataset_path, args.device, transform=transform)
+    train_loader, val_loader = get_train_loader(args.batch_size, args.dataset_path,
+                                                args.device, transform=transform, is_semi=args.is_semi)
 
     if args.model_path is not None:
         with open(args.model_path, 'rb') as f:
@@ -78,11 +73,11 @@ def main(args):
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     for epoch in range(args.num_epochs):
-        loss_train = train(train_loader, model, optimizer)
-        print('epoch {}, loss: {}'.format(epoch,loss_train))
+        loss_train = train(train_loader, model, optimizer, args.is_semi)
+        print('epoch {}, loss: {}'.format(epoch, loss_train))
         writer.add_scalar('loss_train', loss_train, epoch)
         if epoch % 50 == 0:
-            loss_val = val(val_loader, model)
+            loss_val = val(val_loader, model, args.is_semi)
             print('val epoch: {}, loss: {}'.format(epoch, loss_val))
             writer.add_scalar('loss_val', loss_val, epoch)
 
@@ -91,7 +86,7 @@ def main(args):
                        os.path.join(args.out_dir, 'models' , current_time +
                                     '_epoch'+str(epoch) + '.pt'))
     torch.save(model.module.state_dict(),
-               os.path.join(args.out_dir, 'models' , current_time + '_epoch'+str(args.num_epochs)+'.pt'))
+               os.path.join(args.out_dir, 'models', current_time + '_epoch'+str(args.num_epochs)+'.pt'))
 
 
 if __name__ == '__main__':
@@ -99,9 +94,9 @@ if __name__ == '__main__':
     import argparse
     import os
 
-    parser = argparse.ArgumentParser(description='vqvae')
+    parser = argparse.ArgumentParser(description='vae')
 
-    parser.add_argument('--dataset_path', type=str, help='path to the dataset')
+    parser.add_argument('--dataset_path', type=str, help='path to the dataset', default=None)
     parser.add_argument('--model_path', type=str, help='path to the model checkpoint', default=None)
     parser.add_argument('--num_samples', type=int, help='number of samples')
     parser.add_argument('--width', type=int)
@@ -118,6 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=1000)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_per_epochs', type=int, default=500)
+    parser.add_argument('--is_semi', type=int, help='enable semi-supervised or not', default=False)
 
     # miscellaneous
     parser.add_argument('--out_dir', type=str, help='output dir', default='./')

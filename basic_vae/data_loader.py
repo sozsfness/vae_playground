@@ -5,10 +5,10 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import DataLoader
 
 
-def get_train_loader(batch_size, path, device,
+def get_train_loader(batch_size, path, device, is_semi=False,
                      validation_size=0.1, shuffle=True, transform=None,
                      num_workers=0, pin_memory=False):
-    dataset = stereoPair(path, device, transform=transform)
+    dataset = stereoPair(path, device, is_semi=is_semi, transform=transform)
     num_train = len(dataset)
     indices = list(range(num_train))
     split = int(np.floor(validation_size*num_train))

@@ -3,49 +3,39 @@ from torch import nn
 from torch.nn import functional as F
 
 
+class Classifier(nn.Module):
+    def __init__(self, dims):
+        super(Classifier, self).__init__()
+        [x_dim, h_dim, y_dim] = dims
+        self.dense = nn.Linear(x_dim, h_dim)
+        self.logits = nn.Linear(h_dim, y_dim)
+
+    def forward(self, x):
+        x = F.relu(self.dense(x))
+        x = F.softmax(self.logits(x), dim=-1)
+        return x
+
+
 class VAE(nn.Module):
-    def __init__(self, zsize, layer_count=3, channels=3):
+    def __init__(self, zsize, layer_count=3, channels=3, is_semi=False):
         super(VAE, self).__init__()
 
-        self.zsize = zsize
-        self.layer_count = layer_count
-        d = 128
-        mul = 1
-        inputs = channels
-        for i in range(self.layer_count):
-            setattr(self, "conv%d" % (i + 1), nn.Conv2d(inputs, d * mul, 4, 2, 1))
-            setattr(self, "conv%d_bn" % (i + 1), nn.BatchNorm2d(d * mul))
-            inputs = d * mul
-            mul *= 2
+        self.fc1 = nn.Linear(784, 400)
+        self.fc21 = nn.Linear(400, 20)
+        self.fc22 = nn.Linear(400, 20)
+        if is_semi:
+            self.fc3 = nn.Linear(30, 400)
+        else:
+            self.fc3 = nn.Linear(20, 400)
+        self.fc4 = nn.Linear(400, 784)
 
-        self.d_max = inputs
-
-        self.mean = nn.Linear(inputs, zsize)
-        self.var = nn.Linear(inputs, zsize)
-
-        self.d1 = nn.Linear(zsize, inputs)
-
-        mul = inputs // d // 2
-
-        for i in range(1, self.layer_count):
-            setattr(self, "deconv%d" % (i + 1), nn.ConvTranspose2d(inputs, d * mul, 4, 2, 1))
-            setattr(self, "deconv%d_bn" % (i + 1), nn.BatchNorm2d(d * mul))
-            inputs = d * mul
-            mul //= 2
-
-        setattr(self, "deconv%d" % (self.layer_count + 1), nn.ConvTranspose2d(inputs, channels, 4, 2, 1))
+        self.is_semi = is_semi
+        if is_semi:
+            self.classifier = Classifier([784, 256, 10])
 
     def encode(self, x):
-        for i in range(self.layer_count):
-            x = F.relu(getattr(self, "conv%d_bn" % (i + 1))(getattr(self, "conv%d" % (i + 1))(x)))
-        x = x.permute(0,2,3,1)
-        h1 = self.mean(x)
-        h2 = self.var(x)
-        #for Linear, dim needs to be [N,*,*,H]
-        x = x.permute(0,3,1,2)
-        h1 = h1.permute(0,3,1,2)
-        h2 = h2.permute(0,3,1,2)
-        return h1, h2
+        h1 = F.relu(self.fc1(x))
+        return self.fc21(h1), self.fc22(h1)
 
     def reparameterize(self, mu, logvar):
         if self.training:
@@ -55,40 +45,42 @@ class VAE(nn.Module):
         else:
             return mu
 
-    def decode(self, x):
-        # x = x.view(x.shape[0], self.zsize)
-        x = x.permute(0,2,3,1)
-        x = self.d1(x)
-        x = x.permute(0,3,1,2)
-        #x = self.deconv1_bn(x)
-        x = F.leaky_relu(x, 0.2)
-
-        for i in range(1, self.layer_count):
-            x = F.leaky_relu(getattr(self, "deconv%d_bn" % (i + 1))(getattr(self, "deconv%d" % (i + 1))(x)), 0.2)
-
-        x = F.tanh(getattr(self, "deconv%d" % (self.layer_count + 1))(x))
-        return x
+    def decode(self, z):
+        h3 = F.relu(self.fc3(z))
+        return torch.tanh(self.fc4(h3))
 
     def forward(self, x):
-        mu, logvar = self.encode(x)
-        mu = mu.squeeze()
-        logvar = logvar.squeeze()
+        mu, logvar = self.encode(x.view(-1, 784))
+        out_label = None
+        if self.is_semi:
+            out_label = self.classifier(x.view(-1,784))
         z = self.reparameterize(mu, logvar)
-        return self.decode(z), mu, logvar
+        if self.is_semi:
+            z = torch.cat([z, out_label], dim=1)
+        return self.decode(z), mu, logvar, out_label
 
     def weight_init(self, mean, std):
         for m in self._modules:
             normal_init(self._modules[m], mean, std)
 
-def loss_function(recon_x, x, mu, logvar):
-    BCE = torch.mean((recon_x - x)**2)
+
+def loss_function(recon_x, x, mu, logvar, out_label, label):
+    recon_criterion = nn.MSELoss()
+    recon_loss = recon_criterion(recon_x, x.view(-1,784).cuda())
 
     # see Appendix B from VAE paper:
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
     # https://arxiv.org/abs/1312.6114
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    KLD = -0.5 * torch.mean(torch.mean(1 + logvar - mu.pow(2) - logvar.exp(), 1))
-    return BCE , KLD * 0.1
+    KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+
+    c_err = torch.tensor(0)
+    criterion = nn.CrossEntropyLoss()
+
+    if label is not None:
+        c_err = torch.mean(criterion(out_label, label.cuda()))
+
+    return recon_loss, KLD, c_err
 
 
 def normal_init(m, mean, std):
