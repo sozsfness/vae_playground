@@ -29,6 +29,8 @@ to test, run `python test_vae_cat.py --model_path=$model_path --dataset_path=$pa
 
 # Reconstruction of Cat images (trained on cat dataset on Kaggle):
 Reconstructed images on the left, original images on the right
+
+
 ![](imgs/cat_vae/0.png) 
 ![](imgs/cat_vae/1.png) 
 ![](imgs/cat_vae/2.png) 
